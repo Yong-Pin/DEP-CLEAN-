@@ -323,7 +323,7 @@
   <section class="threshold-lab-hero">
     <div>
       <span class="welcome-kicker">DATA-DRIVEN THRESHOLD ANALYSIS</span>
-      <h2>Learn better FALL vs NO_FALL split points from reviewed data</h2>
+      <h2>Learn better FALL vs NO_FALL split points from reviewed or historical data</h2>
       <p>
         This Decision Tree converts reviewed FFH/STF incidents into FALL and near-miss/false-alarm examples into NO_FALL.
         It learns useful sensor split values, but it never silently changes the live safety detector.
@@ -354,11 +354,48 @@
       <div class="card-heading">
         <div>
           <h3>Train a new recommendation</h3>
-          <p>Review incidents first. FFH/STF become FALL; near miss/false alarm become NO_FALL.</p>
+          <p>Use reviewed incidents or import a labelled historical CSV, then train a FALL vs NO_FALL recommendation.</p>
         </div>
       </div>
 
       <div id="thresholdReadiness" class="threshold-readiness"></div>
+
+      <div class="threshold-import-box">
+        <div>
+          <strong>Historical labelled CSV</strong>
+          <p>
+            No Nesso available right now? Import an earlier marked CSV with
+            FALL / NO_FALL labels. The website extracts event features and
+            stores only training samples, not duplicate raw sensor rows.
+          </p>
+        </div>
+
+        <input
+          id="thresholdCsvFile"
+          type="file"
+          accept=".csv,text/csv"
+        >
+
+        <div class="threshold-import-actions">
+          <button
+            id="importThresholdCsvButton"
+            class="secondary-button"
+            type="button"
+          >
+            Import labelled CSV
+          </button>
+
+          <button
+            id="clearThresholdCsvButton"
+            class="ghost-button"
+            type="button"
+          >
+            Clear imported samples
+          </button>
+        </div>
+
+        <p id="thresholdImportMessage" class="form-message"></p>
+      </div>
 
       <label class="feedback-field">
         Admin password
@@ -432,8 +469,7 @@
   <section class="friendly-callout threshold-learning-note">
     <strong>How to improve the recommendation</strong>
     <p>
-      Review more incidents and identify what actually happened. Threshold Lab maps FFH/STF to FALL and near-miss/false-alarm examples to NO_FALL.
-      More varied controlled trials make the learned thresholds and performance metrics more defensible.
+      Add more reviewed incidents or historical controlled trials. Threshold Lab combines these labelled examples with normal background windows. More varied verified trials make the learned thresholds and performance metrics more defensible.
     </p>
     <button class="secondary-button" data-go-page="incidents">
       Review incidents

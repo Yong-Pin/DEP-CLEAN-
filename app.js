@@ -2953,8 +2953,12 @@ function renderThresholdReadiness(data) {
                 summary.reviewed_samples
                 || 0
               )
-            } reviewed examples and
-            ${
+            } reviewed + ${
+              escapeHtml(
+                summary.imported_samples
+                || 0
+              )
+            } imported labelled examples, plus ${
               escapeHtml(
                 summary.auto_normal_samples
                 || 0
@@ -3056,12 +3060,18 @@ function renderThresholdKpis(data) {
   $("thresholdLabKpis").innerHTML =
     [
       kpiCard(
-        "Reviewed labels",
+        "Labelled examples",
         String(
-          summary.reviewed_samples
+          summary.labelled_samples
           || 0
         ),
-        "Human-reviewed incidents",
+        `${
+          summary.reviewed_samples
+          || 0
+        } reviewed + ${
+          summary.imported_samples
+          || 0
+        } historical`,
       ),
       kpiCard(
         "Training samples",
@@ -3080,7 +3090,7 @@ function renderThresholdKpis(data) {
           classes.FALL
           || 0
         ),
-        "Reviewed FFH / STF mapped to FALL",
+        "Reviewed or imported FALL examples",
       ),
       kpiCard(
         "Latest FALL recall",
@@ -3562,6 +3572,171 @@ async function loadThresholdLab(
     );
   }
 }
+
+
+
+async function importThresholdHistoricalCsv() {
+  const password =
+    $("thresholdLabAdminPassword").value;
+
+  const input =
+    $("thresholdCsvFile");
+
+  const file =
+    input.files?.[0];
+
+  if (!password) {
+    $("thresholdImportMessage").textContent =
+      "Enter the admin password first.";
+
+    return;
+  }
+
+  if (!file) {
+    $("thresholdImportMessage").textContent =
+      "Choose a marked FALL / NO_FALL CSV first.";
+
+    return;
+  }
+
+  if (file.size > 8_000_000) {
+    $("thresholdImportMessage").textContent =
+      "Keep each CSV below 8 MB.";
+
+    return;
+  }
+
+  $("importThresholdCsvButton").disabled =
+    true;
+
+  $("thresholdImportMessage").textContent =
+    `Reading ${file.name}…`;
+
+  try {
+    const csvText =
+      await file.text();
+
+    const result =
+      await api(
+        "/api/v1/threshold-learning/import-csv",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+            "X-Admin-Password":
+              password,
+          },
+          body: JSON.stringify(
+            {
+              filename:
+                file.name,
+              csv_text:
+                csvText,
+            }
+          ),
+        },
+      );
+
+    const counts =
+      result.class_counts
+      || {};
+
+    $("thresholdImportMessage").textContent =
+      `Imported ${
+        result.inserted_samples
+        || 0
+      } new training samples (${
+        counts.FALL
+        || 0
+      } FALL, ${
+        counts.NO_FALL
+        || 0
+      } NO_FALL).`;
+
+    showToast(
+      "Historical training data imported",
+      `${
+        result.filename
+        || file.name
+      } is now available to Threshold Lab.`,
+      "success",
+    );
+
+    input.value = "";
+
+    state.thresholdLearningLastLoaded =
+      0;
+
+    await loadThresholdLab(
+      true
+    );
+  } catch (error) {
+    $("thresholdImportMessage").textContent =
+      error.message;
+  } finally {
+    $("importThresholdCsvButton").disabled =
+      false;
+  }
+}
+
+
+async function clearThresholdHistoricalCsv() {
+  const password =
+    $("thresholdLabAdminPassword").value;
+
+  if (!password) {
+    $("thresholdImportMessage").textContent =
+      "Enter the admin password first.";
+
+    return;
+  }
+
+  if (
+    !window.confirm(
+      "Remove all historical CSV training samples? Live incidents and raw sensor data will not be deleted."
+    )
+  ) {
+    return;
+  }
+
+  $("clearThresholdCsvButton").disabled =
+    true;
+
+  try {
+    const result =
+      await api(
+        "/api/v1/threshold-learning/imported",
+        {
+          method: "DELETE",
+          headers: {
+            "X-Admin-Password":
+              password,
+          },
+        },
+      );
+
+    $("thresholdImportMessage").textContent =
+      `Removed ${
+        result.removed_samples
+        || 0
+      } imported training samples.`;
+
+    state.thresholdLearningLastLoaded =
+      0;
+
+    await loadThresholdLab(
+      true
+    );
+  } catch (error) {
+    $("thresholdImportMessage").textContent =
+      error.message;
+  } finally {
+    $("clearThresholdCsvButton").disabled =
+      false;
+  }
+}
+
 
 
 async function trainThresholdRecommendation() {
@@ -4560,6 +4735,18 @@ document
   .forEach(button => {
     button.addEventListener("click", () => sendTelegramTest(button.dataset.telegramTest));
   });
+
+$("importThresholdCsvButton")
+  .addEventListener(
+    "click",
+    importThresholdHistoricalCsv,
+  );
+
+$("clearThresholdCsvButton")
+  .addEventListener(
+    "click",
+    clearThresholdHistoricalCsv,
+  );
 
 $("trainThresholdButton")
   .addEventListener(

@@ -278,6 +278,30 @@ def ensure_schema():
         ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(120)
         """,
         """
+        CREATE TABLE IF NOT EXISTS threshold_imported_samples (
+            id BIGSERIAL PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            import_batch_id VARCHAR(64) NOT NULL,
+            source_filename VARCHAR(255) NOT NULL,
+            source_event_key VARCHAR(160) NOT NULL,
+            label VARCHAR(20) NOT NULL,
+            acc_peak_g DOUBLE PRECISION NOT NULL,
+            gyro_max_dps DOUBLE PRECISION NOT NULL,
+            acc_min_g DOUBLE PRECISION NOT NULL,
+            tilt_change_deg DOUBLE PRECISION NOT NULL,
+            low_g_duration_s DOUBLE PRECISION NOT NULL,
+            acc_pp_g DOUBLE PRECISION NOT NULL,
+            UNIQUE (
+                import_batch_id,
+                source_event_key
+            )
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_threshold_imported_created
+        ON threshold_imported_samples (created_at DESC)
+        """,
+        """
         CREATE TABLE IF NOT EXISTS threshold_training_runs (
             id BIGSERIAL PRIMARY KEY,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -343,6 +367,7 @@ def ensure_schema():
         """ALTER TABLE device_notification_state ENABLE ROW LEVEL SECURITY""",
         """ALTER TABLE telegram_recipients ENABLE ROW LEVEL SECURITY""",
         """ALTER TABLE telegram_pairings ENABLE ROW LEVEL SECURITY""",
+        """ALTER TABLE threshold_imported_samples ENABLE ROW LEVEL SECURITY""",
         """ALTER TABLE threshold_training_runs ENABLE ROW LEVEL SECURITY""",
     ]
 

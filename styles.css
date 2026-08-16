@@ -2773,3 +2773,29 @@ body.modal-open {
     grid-template-columns: 1fr;
   }
 }
+
+
+.threshold-import-box {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.22));
+  border-radius: 14px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.threshold-import-box p {
+  margin: 6px 0 12px;
+  opacity: 0.78;
+}
+
+.threshold-import-box input[type="file"] {
+  display: block;
+  width: 100%;
+  margin: 10px 0 12px;
+}
+
+.threshold-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}

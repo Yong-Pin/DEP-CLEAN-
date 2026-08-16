@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import csv
+import hashlib
+import io
+import math
 
 import numpy as np
 from psycopg2.extras import Json, RealDictCursor
@@ -83,6 +87,9 @@ CLASS_LABELS = [
 
 MIN_REVIEWED_LABELS = 5
 MAX_AUTO_NORMAL_ROWS = 200
+MAX_IMPORTED_NO_FALL_ROWS = 120
+IMPORT_NO_FALL_WINDOW_S = 1.20
+IMPORT_NO_FALL_STEP_S = 2.50
 
 
 def current_thresholds():
@@ -457,18 +464,1009 @@ def _auto_normal_rows(limit):
     return result
 
 
+
+def _baseline_label_for_features(features):
+    """
+    Approximate the current binary FALL / NO_FALL rule for imported historical
+    samples. This is only used for the "current rule system" comparison.
+    """
+
+    ffh_like = (
+        float(features["acc_min_g"]) <= FREE_FALL_G
+        and float(features["low_g_duration_s"]) >= FREE_FALL_MIN_DURATION_S
+        and float(features["acc_peak_g"]) >= IMPACT_G
+        and float(features["gyro_max_dps"]) >= FFH_GYRO_DPS
+    )
+
+    stf_like = (
+        float(features["acc_peak_g"]) >= IMPACT_G
+        and float(features["gyro_max_dps"]) >= STF_GYRO_DPS
+        and float(features["tilt_change_deg"]) >= MIN_TILT_CHANGE_DEG
+    )
+
+    return "FALL" if (ffh_like or stf_like) else "NO_FALL"
+
+
+def _parse_timestamp(value):
+    value = str(value or "").strip()
+
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+
+    # Treat naive timestamps as UTC only for duration calculations.
+    # Relative timing is what matters for feature extraction.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=timezone.utc
+        )
+
+    return parsed
+
+
+def _csv_float(row, key):
+    try:
+        return float(
+            str(
+                row.get(key, "")
+            ).strip()
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_csv_label(value):
+    value = (
+        str(value or "")
+        .strip()
+        .upper()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+    if value in {
+        "FALL",
+        "FFH",
+        "STF",
+        "POSSIBLE_FFH",
+        "POSSIBLE_STF",
+    }:
+        return "FALL"
+
+    if value in {
+        "NO_FALL",
+        "NOFALL",
+        "NORMAL",
+        "NEAR_MISS",
+        "POSSIBLE_NEAR_MISS",
+    }:
+        return "NO_FALL"
+
+    return None
+
+
+def _vector_magnitude(x, y, z):
+    return math.sqrt(
+        x * x
+        + y * y
+        + z * z
+    )
+
+
+def _tilt_change_from_rows(rows):
+    if len(rows) < 6:
+        return 0.0
+
+    count = max(
+        3,
+        int(
+            len(rows) * 0.15
+        ),
+    )
+
+    first = rows[:count]
+    last = rows[-count:]
+
+    def average_vector(items):
+        return [
+            sum(
+                item[key]
+                for item in items
+            )
+            / len(items)
+            for key in (
+                "ax",
+                "ay",
+                "az",
+            )
+        ]
+
+    start = average_vector(first)
+    end = average_vector(last)
+
+    start_mag = _vector_magnitude(
+        *start
+    )
+    end_mag = _vector_magnitude(
+        *end
+    )
+
+    denominator = (
+        start_mag
+        * end_mag
+    )
+
+    if denominator <= 1e-9:
+        return 0.0
+
+    dot = sum(
+        a * b
+        for a, b
+        in zip(
+            start,
+            end,
+        )
+    )
+
+    cosine = max(
+        -1.0,
+        min(
+            1.0,
+            dot / denominator,
+        ),
+    )
+
+    return math.degrees(
+        math.acos(cosine)
+    )
+
+
+def _longest_low_g_duration(rows):
+    if len(rows) < 2:
+        return 0.0
+
+    longest = 0.0
+    started_at = None
+    last_below = None
+
+    for row in rows:
+        if (
+            row["acc_mag_g"]
+            <= FREE_FALL_G
+        ):
+            if started_at is None:
+                started_at = row[
+                    "timestamp"
+                ]
+
+            last_below = row[
+                "timestamp"
+            ]
+
+        else:
+            if (
+                started_at is not None
+                and last_below is not None
+            ):
+                longest = max(
+                    longest,
+                    (
+                        last_below
+                        - started_at
+                    ).total_seconds(),
+                )
+
+            started_at = None
+            last_below = None
+
+    if (
+        started_at is not None
+        and last_below is not None
+    ):
+        longest = max(
+            longest,
+            (
+                last_below
+                - started_at
+            ).total_seconds(),
+        )
+
+    return max(
+        0.0,
+        float(longest),
+    )
+
+
+def _features_from_import_rows(rows):
+    if len(rows) < 5:
+        return None
+
+    rows = sorted(
+        rows,
+        key=lambda item:
+            item["timestamp"],
+    )
+
+    accelerations = [
+        row["acc_mag_g"]
+        for row in rows
+    ]
+
+    rotations = [
+        row["gyro_mag_dps"]
+        for row in rows
+    ]
+
+    acc_peak = max(
+        accelerations
+    )
+
+    acc_min = min(
+        accelerations
+    )
+
+    return {
+        "acc_peak_g": float(
+            acc_peak
+        ),
+        "gyro_max_dps": float(
+            max(rotations)
+        ),
+        "acc_min_g": float(
+            acc_min
+        ),
+        "tilt_change_deg": float(
+            _tilt_change_from_rows(
+                rows
+            )
+        ),
+        "low_g_duration_s": float(
+            _longest_low_g_duration(
+                rows
+            )
+        ),
+        "acc_pp_g": float(
+            acc_peak
+            - acc_min
+        ),
+    }
+
+
+def parse_labelled_csv(
+    csv_text,
+    filename="historical.csv",
+):
+    """
+    Convert a row-level marked IMU CSV into event-level FALL / NO_FALL samples.
+
+    Accepted label headers:
+      label
+      Fall_Label
+
+    FALL rows:
+      one training sample per Event_ID when Event_ID exists.
+
+    NO_FALL rows:
+      non-overlapping-ish 1.2 s windows sampled every 2.5 s.
+    """
+
+    if not isinstance(
+        csv_text,
+        str,
+    ):
+        raise ValueError(
+            "CSV text is required."
+        )
+
+    if len(csv_text) > 8_000_000:
+        raise ValueError(
+            "CSV is too large. Keep each import below 8 MB."
+        )
+
+    reader = csv.DictReader(
+        io.StringIO(
+            csv_text
+        )
+    )
+
+    fieldnames = [
+        str(name or "")
+        .strip()
+        .lstrip("\ufeff")
+        for name
+        in (
+            reader.fieldnames
+            or []
+        )
+    ]
+
+    required = {
+        "Timestamp",
+        "Accelerometer_X_g",
+        "Accelerometer_Y_g",
+        "Accelerometer_Z_g",
+        "Gyroscope_X_deg_s",
+        "Gyroscope_Y_deg_s",
+        "Gyroscope_Z_deg_s",
+    }
+
+    missing = sorted(
+        required
+        - set(fieldnames)
+    )
+
+    if missing:
+        raise ValueError(
+            "CSV is missing required columns: "
+            + ", ".join(
+                missing
+            )
+        )
+
+    label_key = (
+        "label"
+        if "label" in fieldnames
+        else (
+            "Fall_Label"
+            if "Fall_Label"
+            in fieldnames
+            else None
+        )
+    )
+
+    if label_key is None:
+        raise ValueError(
+            "CSV needs a 'label' or 'Fall_Label' column."
+        )
+
+    rows = []
+
+    for raw in reader:
+        normalised = {
+            str(key or "")
+            .strip()
+            .lstrip("\ufeff"):
+                value
+            for key, value
+            in raw.items()
+        }
+
+        timestamp = _parse_timestamp(
+            normalised.get(
+                "Timestamp"
+            )
+        )
+
+        label = _normalise_csv_label(
+            normalised.get(
+                label_key
+            )
+        )
+
+        values = {
+            "ax": _csv_float(
+                normalised,
+                "Accelerometer_X_g",
+            ),
+            "ay": _csv_float(
+                normalised,
+                "Accelerometer_Y_g",
+            ),
+            "az": _csv_float(
+                normalised,
+                "Accelerometer_Z_g",
+            ),
+            "gx": _csv_float(
+                normalised,
+                "Gyroscope_X_deg_s",
+            ),
+            "gy": _csv_float(
+                normalised,
+                "Gyroscope_Y_deg_s",
+            ),
+            "gz": _csv_float(
+                normalised,
+                "Gyroscope_Z_deg_s",
+            ),
+        }
+
+        if (
+            timestamp is None
+            or label is None
+            or any(
+                value is None
+                for value
+                in values.values()
+            )
+        ):
+            continue
+
+        event_id = str(
+            normalised.get(
+                "Event_ID",
+                "",
+            )
+            or ""
+        ).strip()
+
+        acc_mag = _vector_magnitude(
+            values["ax"],
+            values["ay"],
+            values["az"],
+        )
+
+        gyro_mag = _vector_magnitude(
+            values["gx"],
+            values["gy"],
+            values["gz"],
+        )
+
+        rows.append(
+            {
+                "timestamp": timestamp,
+                "label": label,
+                "event_id": event_id,
+                "acc_mag_g": acc_mag,
+                "gyro_mag_dps": gyro_mag,
+                **values,
+            }
+        )
+
+    if not rows:
+        raise ValueError(
+            "No valid labelled sensor rows were found."
+        )
+
+    rows.sort(
+        key=lambda item:
+            item["timestamp"]
+    )
+
+    # Remove exact duplicate sensor records.
+    unique_rows = []
+    seen = set()
+
+    for row in rows:
+        key = (
+            row["timestamp"],
+            row["label"],
+            row["event_id"],
+            round(
+                row["ax"],
+                6,
+            ),
+            round(
+                row["ay"],
+                6,
+            ),
+            round(
+                row["az"],
+                6,
+            ),
+            round(
+                row["gx"],
+                6,
+            ),
+            round(
+                row["gy"],
+                6,
+            ),
+            round(
+                row["gz"],
+                6,
+            ),
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique_rows.append(
+            row
+        )
+
+    rows = unique_rows
+
+    fall_rows = [
+        row
+        for row in rows
+        if row["label"]
+            ==
+            "FALL"
+    ]
+
+    fall_groups = {}
+
+    # Prefer Event_ID because the marked files already contain it.
+    event_ids = {
+        row["event_id"]
+        for row in fall_rows
+        if row["event_id"]
+    }
+
+    if event_ids:
+        for event_id in sorted(
+            event_ids
+        ):
+            group = [
+                row
+                for row in fall_rows
+                if row["event_id"]
+                    ==
+                    event_id
+            ]
+
+            if group:
+                fall_groups[
+                    f"FALL_{event_id}"
+                ] = group
+
+    else:
+        # Fallback: split FALL rows whenever there is a >1.5 s gap.
+        group_number = 0
+        previous_time = None
+
+        for row in fall_rows:
+            if (
+                previous_time is None
+                or (
+                    row["timestamp"]
+                    - previous_time
+                ).total_seconds()
+                > 1.5
+            ):
+                group_number += 1
+
+            fall_groups.setdefault(
+                f"FALL_{group_number}",
+                [],
+            ).append(
+                row
+            )
+
+            previous_time = row[
+                "timestamp"
+            ]
+
+    extracted = []
+
+    for source_key, group in fall_groups.items():
+        features = _features_from_import_rows(
+            group
+        )
+
+        if features is None:
+            continue
+
+        extracted.append(
+            {
+                "source_event_key": source_key,
+                "true_label": "FALL",
+                **features,
+            }
+        )
+
+    no_fall_rows = [
+        row
+        for row in rows
+        if row["label"]
+            ==
+            "NO_FALL"
+    ]
+
+    no_fall_candidates = []
+
+    if no_fall_rows:
+        start_time = no_fall_rows[
+            0
+        ]["timestamp"]
+
+        end_time = no_fall_rows[
+            -1
+        ]["timestamp"]
+
+        centre = (
+            start_time
+            + timedelta(
+                seconds=
+                    IMPORT_NO_FALL_WINDOW_S
+                    / 2.0
+            )
+        )
+
+        half_window = (
+            IMPORT_NO_FALL_WINDOW_S
+            / 2.0
+        )
+
+        while (
+            centre
+            <=
+            end_time
+        ):
+            window = [
+                row
+                for row in no_fall_rows
+                if abs(
+                    (
+                        row["timestamp"]
+                        - centre
+                    ).total_seconds()
+                )
+                <=
+                half_window
+            ]
+
+            # Do not create a NO_FALL window that overlaps any FALL row.
+            overlaps_fall = any(
+                abs(
+                    (
+                        row["timestamp"]
+                        - centre
+                    ).total_seconds()
+                )
+                <=
+                half_window
+                for row
+                in fall_rows
+            )
+
+            if (
+                len(window) >= 5
+                and not overlaps_fall
+            ):
+                features = _features_from_import_rows(
+                    window
+                )
+
+                if features is not None:
+                    no_fall_candidates.append(
+                        {
+                            "source_event_key": (
+                                "NOFALL_"
+                                + centre.isoformat()
+                            ),
+                            "true_label": "NO_FALL",
+                            **features,
+                        }
+                    )
+
+            centre += timedelta(
+                seconds=
+                    IMPORT_NO_FALL_STEP_S
+            )
+
+    # Keep NO_FALL examples useful but bounded.
+    max_no_fall = min(
+        MAX_IMPORTED_NO_FALL_ROWS,
+        max(
+            20,
+            len(extracted)
+            * 3,
+        ),
+    )
+
+    if (
+        len(no_fall_candidates)
+        >
+        max_no_fall
+    ):
+        indexes = np.linspace(
+            0,
+            len(no_fall_candidates)
+            - 1,
+            max_no_fall,
+            dtype=int,
+        )
+
+        no_fall_candidates = [
+            no_fall_candidates[
+                int(index)
+            ]
+            for index
+            in indexes
+        ]
+
+    extracted.extend(
+        no_fall_candidates
+    )
+
+    counts = Counter(
+        row["true_label"]
+        for row in extracted
+    )
+
+    if (
+        counts.get(
+            "FALL",
+            0,
+        )
+        == 0
+        or counts.get(
+            "NO_FALL",
+            0,
+        )
+        == 0
+    ):
+        raise ValueError(
+            "Import needs both FALL and NO_FALL examples."
+        )
+
+    return {
+        "filename": str(
+            filename
+            or "historical.csv"
+        ),
+        "rows": extracted,
+        "class_counts": dict(
+            counts
+        ),
+        "raw_valid_rows": len(
+            rows
+        ),
+    }
+
+
+def import_labelled_csv(
+    csv_text,
+    filename="historical.csv",
+):
+    parsed = parse_labelled_csv(
+        csv_text,
+        filename,
+    )
+
+    fingerprint = hashlib.sha256(
+        csv_text.encode(
+            "utf-8",
+            errors="ignore",
+        )
+    ).hexdigest()
+
+    inserted = 0
+
+    with database() as connection:
+        with connection.cursor() as cursor:
+            for row in parsed["rows"]:
+                cursor.execute(
+                    """
+                    INSERT INTO threshold_imported_samples (
+                        import_batch_id,
+                        source_filename,
+                        source_event_key,
+                        label,
+                        acc_peak_g,
+                        gyro_max_dps,
+                        acc_min_g,
+                        tilt_change_deg,
+                        low_g_duration_s,
+                        acc_pp_g
+                    )
+                    VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (
+                        import_batch_id,
+                        source_event_key
+                    )
+                    DO NOTHING
+                    """,
+                    (
+                        fingerprint,
+                        parsed["filename"],
+                        row["source_event_key"],
+                        row["true_label"],
+                        row["acc_peak_g"],
+                        row["gyro_max_dps"],
+                        row["acc_min_g"],
+                        row["tilt_change_deg"],
+                        row["low_g_duration_s"],
+                        row["acc_pp_g"],
+                    ),
+                )
+
+                inserted += int(
+                    cursor.rowcount
+                    > 0
+                )
+
+    return {
+        "ok": True,
+        "filename": parsed[
+            "filename"
+        ],
+        "raw_valid_rows": parsed[
+            "raw_valid_rows"
+        ],
+        "extracted_samples": len(
+            parsed["rows"]
+        ),
+        "inserted_samples": inserted,
+        "duplicate_samples": (
+            len(
+                parsed["rows"]
+            )
+            - inserted
+        ),
+        "class_counts": parsed[
+            "class_counts"
+        ],
+    }
+
+
+def clear_imported_samples():
+    with database() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM threshold_imported_samples
+                """
+            )
+
+            removed = int(
+                cursor.rowcount
+                or 0
+            )
+
+    return {
+        "ok": True,
+        "removed_samples": removed,
+    }
+
+
+def _imported_rows():
+    query = """
+        SELECT
+            id,
+            label,
+            acc_peak_g,
+            gyro_max_dps,
+            acc_min_g,
+            tilt_change_deg,
+            low_g_duration_s,
+            acc_pp_g
+        FROM threshold_imported_samples
+        ORDER BY id
+    """
+
+    with database() as connection:
+        with connection.cursor(
+            cursor_factory=RealDictCursor
+        ) as cursor:
+            cursor.execute(
+                query
+            )
+
+            rows = cursor.fetchall()
+
+    result = []
+
+    for row in rows:
+        features = {
+            key: float(
+                row[key]
+            )
+            for key
+            in FEATURE_KEYS
+        }
+
+        true_label = _normalise_actual_type(
+            row.get(
+                "label"
+            )
+        )
+
+        if true_label not in CLASS_LABELS:
+            continue
+
+        result.append(
+            {
+                "source": "IMPORTED_CSV",
+                "source_id": int(
+                    row["id"]
+                ),
+                "true_label": true_label,
+                "predicted_label": (
+                    _baseline_label_for_features(
+                        features
+                    )
+                ),
+                **features,
+            }
+        )
+
+    return result
+
+
+def imported_sample_summary():
+    query = """
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (
+                WHERE label = 'FALL'
+            ) AS fall_count,
+            COUNT(*) FILTER (
+                WHERE label = 'NO_FALL'
+            ) AS no_fall_count,
+            COUNT(
+                DISTINCT import_batch_id
+            ) AS file_count
+        FROM threshold_imported_samples
+    """
+
+    with database() as connection:
+        with connection.cursor(
+            cursor_factory=RealDictCursor
+        ) as cursor:
+            cursor.execute(
+                query
+            )
+
+            row = cursor.fetchone() or {}
+
+    return {
+        "total": int(
+            row.get(
+                "total"
+            )
+            or 0
+        ),
+        "fall": int(
+            row.get(
+                "fall_count"
+            )
+            or 0
+        ),
+        "no_fall": int(
+            row.get(
+                "no_fall_count"
+            )
+            or 0
+        ),
+        "files": int(
+            row.get(
+                "file_count"
+            )
+            or 0
+        ),
+    }
+
+
+
 def build_training_dataset():
     reviewed = _reviewed_rows()
+    imported = _imported_rows()
 
-    reviewed_count = len(reviewed)
+    reviewed_count = len(
+        reviewed
+    )
+    imported_count = len(
+        imported
+    )
 
-    # Keep the automatic normal background useful without letting it completely
-    # dominate a small event dataset.
+    labelled = (
+        reviewed
+        + imported
+    )
+
+    labelled_count = len(
+        labelled
+    )
+
+    # Background normal windows supplement the labelled examples without
+    # overwhelming them.
     auto_normal_limit = min(
         MAX_AUTO_NORMAL_ROWS,
         max(
             20,
-            reviewed_count * 3,
+            labelled_count * 2,
         ),
     )
 
@@ -476,7 +1474,10 @@ def build_training_dataset():
         auto_normal_limit
     )
 
-    rows = reviewed + auto_normal
+    rows = (
+        labelled
+        + auto_normal
+    )
 
     class_counts = Counter(
         row["true_label"]
@@ -488,21 +1489,48 @@ def build_training_dataset():
         for row in reviewed
     )
 
+    imported_class_counts = Counter(
+        row["true_label"]
+        for row in imported
+    )
+
+    labelled_class_counts = Counter(
+        row["true_label"]
+        for row in labelled
+    )
+
     return {
         "rows": rows,
         "reviewed_rows": reviewed,
+        "imported_rows": imported,
         "auto_normal_rows": auto_normal,
         "summary": {
-            "total_samples": len(rows),
-            "reviewed_samples": reviewed_count,
+            "total_samples": len(
+                rows
+            ),
+            "labelled_samples": (
+                labelled_count
+            ),
+            "reviewed_samples": (
+                reviewed_count
+            ),
+            "imported_samples": (
+                imported_count
+            ),
             "auto_normal_samples": len(
                 auto_normal
             ),
             "class_counts": dict(
                 class_counts
             ),
+            "labelled_class_counts": dict(
+                labelled_class_counts
+            ),
             "reviewed_class_counts": dict(
                 reviewed_class_counts
+            ),
+            "imported_class_counts": dict(
+                imported_class_counts
             ),
         },
     }
@@ -514,34 +1542,46 @@ def training_readiness(dataset=None):
 
     summary = dataset["summary"]
 
-    reviewed_count = int(
-        summary["reviewed_samples"]
+    labelled_count = int(
+        summary.get(
+            "labelled_samples",
+            0,
+        )
     )
 
-    reviewed_class_counts = {
+    labelled_class_counts = {
         key: int(value)
         for key, value
-        in summary[
-            "reviewed_class_counts"
-        ].items()
+        in summary.get(
+            "labelled_class_counts",
+            {},
+        ).items()
     }
 
     class_counts = {
         key: int(value)
         for key, value
-        in summary["class_counts"].items()
+        in summary.get(
+            "class_counts",
+            {},
+        ).items()
     }
 
     reasons = []
 
-    if reviewed_count < MIN_REVIEWED_LABELS:
+    if (
+        labelled_count
+        <
+        MIN_REVIEWED_LABELS
+    ):
         reasons.append(
-            f"Review at least {MIN_REVIEWED_LABELS} incidents first "
-            f"({reviewed_count} available)."
+            "Import or review at least "
+            f"{MIN_REVIEWED_LABELS} labelled events "
+            f"({labelled_count} available)."
         )
 
     fall_labels = int(
-        reviewed_class_counts.get(
+        labelled_class_counts.get(
             "FALL",
             0,
         )
@@ -549,7 +1589,7 @@ def training_readiness(dataset=None):
 
     if fall_labels < 3:
         reasons.append(
-            "At least 3 reviewed FALL examples are recommended."
+            "At least 3 labelled FALL examples are recommended."
         )
 
     nonzero_classes = [
@@ -568,9 +1608,9 @@ def training_readiness(dataset=None):
         "ready": not reasons,
         "reasons": reasons,
         "recommended_next_step": (
-            "Review more incidents. FFH and STF reviews become FALL; "
-            "near misses and false alarms become NO_FALL. "
-            "More controlled examples make the recommendation more defensible."
+            "Use reviewed live incidents or import a historical labelled CSV. "
+            "FALL and NO_FALL examples are combined with background normal "
+            "feature windows before training."
         ),
     }
 
@@ -1384,6 +2424,9 @@ def status():
             )
         ),
         "latest_run": latest_run(),
+        "historical_import": (
+            imported_sample_summary()
+        ),
         "behaviour": {
             "automatic_apply": False,
             "explanation": (

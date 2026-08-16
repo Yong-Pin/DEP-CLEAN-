@@ -40,6 +40,8 @@ from telegram_notifications import (
     update_recipient,
 )
 from threshold_optimizer import (
+    clear_imported_samples as clear_threshold_imported_samples,
+    import_labelled_csv as import_threshold_labelled_csv,
     status as threshold_learning_status,
     train_recommendation as train_threshold_recommendation,
 )
@@ -2189,6 +2191,20 @@ def system_verification():
 
 
 
+
+class ThresholdHistoricalCsvRequest(BaseModel):
+    filename: str = Field(
+        default="historical.csv",
+        min_length=1,
+        max_length=255,
+    )
+    csv_text: str = Field(
+        min_length=10,
+        max_length=8_000_000,
+    )
+
+
+
 @app.get("/api/v1/threshold-learning/status")
 def threshold_learning_status_endpoint():
     return threshold_learning_status()
@@ -2206,6 +2222,38 @@ def threshold_learning_train_endpoint(
         return result
 
     return result
+
+
+@app.post("/api/v1/threshold-learning/import-csv")
+def threshold_learning_import_csv_endpoint(
+    request: ThresholdHistoricalCsvRequest,
+    x_admin_password: str | None = Header(default=None),
+):
+    require_admin_password(
+        x_admin_password
+    )
+
+    try:
+        return import_threshold_labelled_csv(
+            request.csv_text,
+            request.filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+
+@app.delete("/api/v1/threshold-learning/imported")
+def threshold_learning_clear_imported_endpoint(
+    x_admin_password: str | None = Header(default=None),
+):
+    require_admin_password(
+        x_admin_password
+    )
+
+    return clear_threshold_imported_samples()
 
 
 @app.get("/api/v1/notifications/status")
