@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>Nesso Safety Command Centre</title>
+  <meta
+    name="description"
+    content="Construction worker safety monitoring dashboard for Nesso IMU devices."
+  >
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+  <div id="toastContainer" class="toast-container"></div>
+
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+
+        <div class="brand-copy">
+          <strong>Nesso Safety</strong>
+          <span>Command Centre</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-page="overview">
+          <span class="nav-icon">⌂</span>
+          <span>Overview</span>
+        </button>
+
+        <button class="nav-item" data-page="workers">
+          <span class="nav-icon">◉</span>
+          <span>Workers</span>
+        </button>
+
+        <button class="nav-item" data-page="incidents">
+          <span class="nav-icon">!</span>
+          <span>Incidents</span>
+          <span id="incidentNavBadge" class="nav-badge hidden">0</span>
+        </button>
+
+        <button class="nav-item" data-page="analytics">
+          <span class="nav-icon">▥</span>
+          <span>Analytics</span>
+        </button>
+
+        <button class="nav-item" data-page="thresholdLab">
+          <span class="nav-icon">⌘</span>
+          <span>Threshold Lab</span>
+        </button>
+
+        <button class="nav-item" data-page="health">
+          <span class="nav-icon">♡</span>
+          <span>System Health</span>
+        </button>
+
+        <button class="nav-item" data-page="notifications">
+          <span class="nav-icon">✈</span>
+          <span>Telegram Alerts</span>
+          <span id="telegramNavDot" class="telegram-nav-dot"></span>
+        </button>
+
+        <button class="nav-item" data-page="technical">
+          <span class="nav-icon">⌁</span>
+          <span>Technical</span>
+        </button>
+
+        <button class="nav-item" data-page="admin">
+          <span class="nav-icon">⚙</span>
+          <span>Admin</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="system-mini">
+          <span id="sidebarLiveDot" class="live-dot"></span>
+          <div>
+            <strong id="sidebarSystemText">Connecting</strong>
+            <span id="sidebarUpdateText">Waiting for data</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="mobileMenuButton" class="icon-button mobile-only" aria-label="Open navigation">
+            ☰
+          </button>
+
+          <div>
+            <div id="pageEyebrow" class="page-eyebrow">SITE MONITORING</div>
+            <h1 id="pageTitle">Overview</h1>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <label class="sound-switch" title="Play a sound when a new incident arrives">
+            <input id="soundToggle" type="checkbox">
+            <span class="switch-track"></span>
+            <span class="sound-label">Alert sound</span>
+          </label>
+
+          <div id="connectionPill" class="connection-pill connecting">
+            <span class="connection-dot"></span>
+            <span id="connectionText">Connecting</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="content">
+        <section id="overviewPage" class="page active">
+          <section class="welcome-hero">
+            <div class="welcome-copy">
+              <span class="welcome-kicker">NESSO SAFETY MONITORING</span>
+              <h2 id="welcomeHeading">Welcome back</h2>
+              <p id="welcomeMessage">
+                Your live worker safety overview is ready. Important events and device issues are brought to the top so you know what needs attention first.
+              </p>
+
+              <div class="welcome-actions">
+                <button class="primary-button" data-go-page="workers">View workers</button>
+                <button class="secondary-button" data-go-page="incidents">Review incidents</button>
+                <button class="secondary-button" data-go-page="health">Check system health</button>
+              </div>
+            </div>
+
+            <div class="welcome-visual" aria-label="System data flow">
+              <div class="flow-pill">Nesso IMU</div>
+              <span>→</span>
+              <div class="flow-pill">Render API</div>
+              <span>→</span>
+              <div class="flow-pill">Supabase</div>
+              <span>→</span>
+              <div class="flow-pill">Dashboard</div>
+            </div>
+          </section>
+
+          <div id="overviewKpis" class="kpi-grid"></div>
+
+          <section id="siteStatusCard" class="site-status-card">
+            <div class="site-status-icon">✓</div>
+
+            <div class="site-status-copy">
+              <div class="label">SITE STATUS</div>
+              <h2>Waiting for live data</h2>
+              <p>Connecting to the Nesso safety backend.</p>
+            </div>
+
+            <div id="siteStatusMeta" class="site-status-meta"></div>
+          </section>
+
+          <div class="section-title-row">
+            <div>
+              <h2>Worker status</h2>
+              <p>Current device connectivity and movement classification.</p>
+            </div>
+
+            <button class="text-button" data-go-page="workers">
+              View all workers →
+            </button>
+          </div>
+
+          <div id="overviewWorkerGrid" class="worker-grid"></div>
+
+          <div class="two-column-layout">
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Latest incidents</h3>
+                  <p>Most recent safety events.</p>
+                </div>
+
+                <button class="text-button" data-go-page="incidents">
+                  View history
+                </button>
+              </div>
+
+              <div id="overviewIncidentList" class="compact-list"></div>
+            </section>
+
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Device health</h3>
+                  <p>Battery and connectivity overview.</p>
+                </div>
+              </div>
+
+              <div id="deviceHealthList" class="compact-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="workersPage" class="page">
+          <section class="toolbar-card">
+            <div class="search-box">
+              <span>⌕</span>
+              <input
+                id="workerSearch"
+                type="search"
+                placeholder="Search worker or device..."
+              >
+            </div>
+
+            <select id="workerConnectionFilter" class="filter-control">
+              <option value="all">All connectivity</option>
+              <option value="online">Online</option>
+              <option value="offline">Offline</option>
+            </select>
+
+            <select id="workerActivityFilter" class="filter-control">
+              <option value="all">All activities</option>
+              <option value="normal">Normal</option>
+              <option value="warning">Warnings</option>
+              <option value="incident">Possible incidents</option>
+            </select>
+          </section>
+
+          <div id="workersSummary" class="filter-summary"></div>
+          <div id="workersGrid" class="worker-grid large"></div>
+        </section>
+
+        <section id="incidentsPage" class="page">
+          <section class="toolbar-card incident-toolbar">
+            <select id="incidentTypeFilter" class="filter-control">
+              <option value="all">All event types</option>
+              <option value="POSSIBLE_FFH">Possible FFH</option>
+              <option value="POSSIBLE_STF">Possible STF</option>
+              <option value="POSSIBLE_NEAR_MISS">Possible near miss</option>
+            </select>
+
+            <select id="incidentSeverityFilter" class="filter-control">
+              <option value="all">All severity</option>
+              <option value="URGENT">Urgent</option>
+              <option value="ATTENTION">Attention</option>
+            </select>
+
+            <select id="incidentStatusFilter" class="filter-control">
+              <option value="all">All status</option>
+              <option value="open">Open</option>
+              <option value="acknowledged">Acknowledged</option>
+            </select>
+
+            <select id="incidentWorkerFilter" class="filter-control">
+              <option value="all">All workers</option>
+            </select>
+
+            <button id="exportIncidentsButton" class="secondary-button">
+              Export incidents CSV
+            </button>
+          </section>
+
+          <div id="incidentSummary" class="filter-summary"></div>
+          <div id="incidentCards" class="incident-grid"></div>
+        </section>
+
+        <section id="analyticsPage" class="page">
+          <div id="analyticsKpis" class="kpi-grid"></div>
+
+          <div class="chart-grid">
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Incidents by type</h3>
+                  <p>Based on loaded incident history.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="incidentTypeChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Incidents over time</h3>
+                  <p>Daily event trend.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="incidentTrendChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Incidents by worker</h3>
+                  <p>Comparison across registered workers.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="workerIncidentChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Battery overview</h3>
+                  <p>Latest reported battery percentage.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="batteryChart"></canvas>
+              </div>
+            </section>
+          </div>
+        </section>
+
+<section id="thresholdLabPage" class="page">
+  <section class="threshold-lab-hero">
+    <div>
+      <span class="welcome-kicker">DATA-DRIVEN THRESHOLD ANALYSIS</span>
+      <h2>Learn better FALL vs NO_FALL split points from reviewed data</h2>
+      <p>
+        This Decision Tree converts reviewed FFH/STF incidents into FALL and near-miss/false-alarm examples into NO_FALL.
+        It learns useful sensor split values, but it never silently changes the live safety detector.
+      </p>
+    </div>
+
+    <div class="threshold-safety-chip">
+      <strong>Recommendation only</strong>
+      <span>Live FFH/STF/near-miss thresholds stay unchanged until you validate and edit them deliberately.</span>
+    </div>
+  </section>
+
+  <div id="thresholdLabKpis" class="kpi-grid"></div>
+
+  <div class="two-column-layout threshold-lab-columns">
+    <section class="panel-card">
+      <div class="card-heading">
+        <div>
+          <h3>Current rule-based thresholds</h3>
+          <p>The values your current cloud safety detector is using.</p>
+        </div>
+      </div>
+
+      <div id="currentThresholdList" class="threshold-current-list"></div>
+    </section>
+
+    <section class="panel-card threshold-train-card">
+      <div class="card-heading">
+        <div>
+          <h3>Train a new recommendation</h3>
+          <p>Review incidents first. FFH/STF become FALL; near miss/false alarm become NO_FALL.</p>
+        </div>
+      </div>
+
+      <div id="thresholdReadiness" class="threshold-readiness"></div>
+
+      <label class="feedback-field">
+        Admin password
+        <input
+          id="thresholdLabAdminPassword"
+          type="password"
+          placeholder="Required to train recommendation"
+        >
+      </label>
+
+      <button id="trainThresholdButton" class="primary-button">
+        Train Decision Tree Recommendation
+      </button>
+
+      <p id="thresholdTrainMessage" class="form-message"></p>
+    </section>
+  </div>
+
+  <section class="panel-card threshold-result-card">
+    <div class="card-heading">
+      <div>
+        <h3>Latest Decision Tree result</h3>
+        <p id="thresholdRunMeta">No recommendation trained yet.</p>
+      </div>
+
+      <button id="refreshThresholdButton" class="secondary-button">
+        Refresh
+      </button>
+    </div>
+
+    <div id="thresholdModelComparison" class="threshold-comparison"></div>
+  </section>
+
+  <div class="two-column-layout threshold-result-columns">
+    <section class="panel-card">
+      <div class="card-heading">
+        <div>
+          <h3>Learned split rules</h3>
+          <p>These are the actual thresholds selected by the Decision Tree.</p>
+        </div>
+      </div>
+
+      <div id="thresholdSplitRules" class="threshold-rule-list"></div>
+    </section>
+
+    <section class="panel-card">
+      <div class="card-heading">
+        <div>
+          <h3>Feature importance</h3>
+          <p>Which sensor features influenced the trained tree most.</p>
+        </div>
+      </div>
+
+      <div id="thresholdFeatureImportance" class="feature-importance-list"></div>
+    </section>
+  </div>
+
+  <section class="panel-card threshold-matrix-card">
+    <div class="card-heading">
+      <div>
+        <h3>Decision Tree confusion matrix</h3>
+        <p id="thresholdEvaluationNote">
+          Train a recommendation to see its evaluation.
+        </p>
+      </div>
+    </div>
+
+    <div id="thresholdConfusionMatrix"></div>
+  </section>
+
+  <section class="friendly-callout threshold-learning-note">
+    <strong>How to improve the recommendation</strong>
+    <p>
+      Review more incidents and identify what actually happened. Threshold Lab maps FFH/STF to FALL and near-miss/false-alarm examples to NO_FALL.
+      More varied controlled trials make the learned thresholds and performance metrics more defensible.
+    </p>
+    <button class="secondary-button" data-go-page="incidents">
+      Review incidents
+    </button>
+  </section>
+</section>
+
+        <section id="healthPage" class="page">
+          <section class="health-intro">
+            <div>
+              <span class="welcome-kicker">PIPELINE CONFIDENCE</span>
+              <h2>System health at a glance</h2>
+              <p>
+                See whether your devices are delivering data reliably, how much data is being stored, and how reviewed alerts are performing.
+              </p>
+            </div>
+
+            <label class="health-range-control">
+              Time range
+              <select id="healthHours" class="filter-control">
+                <option value="1">Last hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="24" selected>Last 24 hours</option>
+                <option value="72">Last 3 days</option>
+                <option value="168">Last 7 days</option>
+              </select>
+            </label>
+          </section>
+
+          <div id="qualityKpis" class="kpi-grid"></div>
+
+          <section class="panel-card pipeline-card">
+            <div class="card-heading">
+              <div>
+                <h3>Live data pipeline</h3>
+                <p>The stages your project uses from wearable sensor to dashboard.</p>
+              </div>
+            </div>
+
+            <div class="pipeline-flow">
+              <div class="pipeline-node">
+                <span class="pipeline-state ok">LIVE</span>
+                <strong>Nesso N1</strong>
+                <small>100 Hz local IMU sampling</small>
+              </div>
+              <span class="pipeline-arrow">→</span>
+              <div class="pipeline-node">
+                <span id="pipelineRenderStatus" class="pipeline-state ok">LIVE</span>
+                <strong>Render API</strong>
+                <small>Ingest + feature processing</small>
+              </div>
+              <span class="pipeline-arrow">→</span>
+              <div class="pipeline-node">
+                <span class="pipeline-state ok">CONNECTED</span>
+                <strong>Supabase</strong>
+                <small>PostgreSQL storage</small>
+              </div>
+              <span class="pipeline-arrow">→</span>
+              <div class="pipeline-node">
+                <span class="pipeline-state ok">LIVE</span>
+                <strong>Dashboard</strong>
+                <small>2-second refresh</small>
+              </div>
+            </div>
+          </section>
+
+          <div class="two-column-layout health-columns">
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Device data quality</h3>
+                  <p>Cloud delivery rate, observed sample rate and processing latency.</p>
+                </div>
+              </div>
+              <div id="qualityDeviceList" class="health-device-list"></div>
+            </section>
+
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Storage efficiency</h3>
+                  <p>Estimated reduction from local sensor generation to database storage.</p>
+                </div>
+              </div>
+              <div id="storageKpis" class="storage-stack"></div>
+            </section>
+          </div>
+
+          <section class="panel-card verification-card">
+            <div class="card-heading">
+              <div>
+                <h3>Human incident verification</h3>
+                <p>Use reviewed incidents to see how many alerts were confirmed or marked as false alarms.</p>
+              </div>
+            </div>
+
+            <div id="verificationKpis" class="verification-grid"></div>
+            <p id="verificationNote" class="friendly-note"></p>
+          </section>
+        </section>
+
+        <section id="notificationsPage" class="page">
+          <section class="telegram-hero">
+            <div>
+              <span class="welcome-kicker">TELEGRAM SAFETY NOTIFICATIONS</span>
+              <h2>Reach people even when nobody is watching the dashboard</h2>
+              <p>
+                Normal updates are delivered silently. Possible falls are promoted to audible alerts, and a possible fall from height is treated as a critical event.
+              </p>
+            </div>
+
+            <div id="telegramConnectionCard" class="telegram-connection-card">
+              <span class="status-orb"></span>
+              <div>
+                <strong id="telegramConnectionTitle">Checking Telegram…</strong>
+                <span id="telegramConnectionSubtitle">Loading configuration</span>
+              </div>
+            </div>
+          </section>
+
+          <div id="notificationKpis" class="kpi-grid"></div>
+
+          <div class="priority-grid">
+            <article class="priority-card normal-priority">
+              <span class="priority-label">NORMAL · SILENT</span>
+              <h3>Useful updates</h3>
+              <p>Near miss, low battery, device offline and connection restored.</p>
+              <div class="priority-example">Telegram receives the message without notification sound.</div>
+            </article>
+
+            <article class="priority-card urgent-priority">
+              <span class="priority-label">URGENT · AUDIBLE</span>
+              <h3>Possible STF</h3>
+              <p>A possible slip, trip or fall sends a normal audible Telegram notification.</p>
+              <div class="priority-example">Supervisor should check the worker as soon as possible.</div>
+            </article>
+
+            <article class="priority-card critical-priority">
+              <span class="priority-label">CRITICAL · AUDIBLE + REPEAT</span>
+              <h3>Possible FFH</h3>
+              <p>A possible fall from height sends the strongest alert and repeats if it stays unacknowledged.</p>
+              <div class="priority-example">Designed to stand out immediately in a Telegram safety group.</div>
+            </article>
+          </div>
+
+          <section class="panel-card recipient-manager-card">
+            <div class="card-heading">
+              <div>
+                <h3>Who receives Telegram alerts?</h3>
+                <p>Add supervisors, project members or a Telegram safety group without editing Render settings.</p>
+              </div>
+              <button id="loadTelegramRecipientsButton" class="secondary-button">Load recipients</button>
+            </div>
+
+            <div class="recipient-manager-grid">
+              <div class="recipient-add-panel">
+                <h4>Add a person or group</h4>
+                <p class="friendly-note">Create a temporary pairing code, then connect it from Telegram. Chat IDs are never typed into the website.</p>
+
+                <div class="telegram-form-row recipient-form-row">
+                  <label>
+                    Name shown on dashboard
+                    <input id="newRecipientName" type="text" maxlength="120" placeholder="e.g. Site Supervisor">
+                  </label>
+
+                  <label>
+                    Recipient type
+                    <select id="newRecipientType">
+                      <option value="PERSON">Person</option>
+                      <option value="GROUP">Telegram group</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="recipient-level-picker">
+                  <label><input id="newRecipientNormal" type="checkbox" checked> <span><strong>Normal</strong><small>Silent updates</small></span></label>
+                  <label><input id="newRecipientUrgent" type="checkbox" checked> <span><strong>Urgent</strong><small>Possible STF</small></span></label>
+                  <label><input id="newRecipientCritical" type="checkbox" checked> <span><strong>Critical</strong><small>Possible FFH</small></span></label>
+                </div>
+
+                <button id="createTelegramPairingButton" class="primary-button">Connect Telegram recipient</button>
+              </div>
+
+              <div id="telegramPairingInstructions" class="pairing-instructions empty-pairing">
+                <div class="pairing-icon">↗</div>
+                <div>
+                  <strong>No pairing in progress</strong>
+                  <span>Create a recipient on the left. The website will show the exact Telegram step.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="recipient-admin-row">
+              <label>
+                Admin password
+                <input id="notificationAdminPassword" type="password" placeholder="Required to manage Telegram settings">
+              </label>
+              <span>Your Telegram bot token stays only in Render. Recipients are stored in Supabase after they connect.</span>
+            </div>
+
+            <div class="recipient-list-heading">
+              <div>
+                <strong>Connected recipients</strong>
+                <span>Choose which alert levels each person or group receives.</span>
+              </div>
+            </div>
+            <div id="telegramRecipientList" class="telegram-recipient-list">
+              <div class="empty-state">Enter the admin password and click Load recipients.</div>
+            </div>
+            <p id="telegramRecipientMessage" class="form-message"></p>
+          </section>
+
+          <div class="notification-layout">
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Notification settings</h3>
+                  <p>Choose which events the Telegram bot should send.</p>
+                </div>
+              </div>
+
+              <div class="notification-toggle-list">
+                <label class="notification-toggle-row">
+                  <span><strong>Telegram notifications</strong><small>Master switch for all bot messages</small></span>
+                  <input id="notifyTelegramEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Normal system updates</strong><small>Allows silent offline, restored and battery messages</small></span>
+                  <input id="notifyNormalEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Near miss</strong><small>Silent normal Telegram update</small></span>
+                  <input id="notifyNearMissEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Possible STF</strong><small>Audible urgent alert</small></span>
+                  <input id="notifyStfEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Possible FFH</strong><small>Critical audible alert with escalation</small></span>
+                  <input id="notifyFfhEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Device offline</strong><small>Silent update after about 30 seconds without data</small></span>
+                  <input id="notifyOfflineEnabled" type="checkbox">
+                </label>
+                <label class="notification-toggle-row">
+                  <span><strong>Low battery</strong><small>Silent update at 15% or lower</small></span>
+                  <input id="notifyBatteryEnabled" type="checkbox">
+                </label>
+              </div>
+
+              <div class="telegram-form-row">
+                <label>
+                  Critical FFH repeat delay
+                  <select id="notifyRepeatSeconds">
+                    <option value="15">15 seconds</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">60 seconds</option>
+                    <option value="120">2 minutes</option>
+                  </select>
+                </label>
+
+              </div>
+
+              <button id="saveNotificationSettingsButton" class="primary-button">Save notification settings</button>
+              <p id="notificationSettingsMessage" class="form-message"></p>
+            </section>
+
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Test the Telegram bot</h3>
+                  <p>Use these before your demonstration to confirm the group receives each level.</p>
+                </div>
+              </div>
+
+              <div class="telegram-test-stack">
+                <button class="telegram-test-button normal" data-telegram-test="NORMAL">
+                  <span>✅</span>
+                  <div><strong>Send normal test</strong><small>Silent delivery</small></div>
+                </button>
+                <button class="telegram-test-button urgent" data-telegram-test="URGENT">
+                  <span>🚨</span>
+                  <div><strong>Send urgent test</strong><small>Audible STF-style alert</small></div>
+                </button>
+                <button class="telegram-test-button critical" data-telegram-test="CRITICAL">
+                  <span>🆘</span>
+                  <div><strong>Send critical test</strong><small>Audible FFH-style alert</small></div>
+                </button>
+              </div>
+
+              <div class="telegram-security-note">
+                <strong>Bot token stays on Render.</strong>
+                <span>The browser never receives or displays your Telegram bot token.</span>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel-card notification-log-card">
+            <div class="card-heading">
+              <div>
+                <h3>Recent Telegram deliveries</h3>
+                <p>Shows whether messages were sent successfully without exposing your bot token or chat IDs.</p>
+              </div>
+              <button id="refreshNotificationsButton" class="secondary-button">Refresh</button>
+            </div>
+            <div id="notificationLog" class="notification-log"></div>
+          </section>
+        </section>
+
+        <section id="technicalPage" class="page">
+          <section class="toolbar-card">
+            <div class="toolbar-label">
+              <strong>Inspect device</strong>
+              <span>Processed feature windows used by the classifier.</span>
+            </div>
+
+            <select id="technicalDevice" class="filter-control wide"></select>
+
+            <button id="exportSensorButton" class="secondary-button">
+              Export sensor CSV
+            </button>
+
+            <button id="exportFeatureButton" class="secondary-button">
+              Export features CSV
+            </button>
+          </section>
+
+          <div id="technicalKpis" class="kpi-grid"></div>
+
+          <div class="chart-grid">
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Acceleration peak</h3>
+                  <p>Maximum acceleration per feature window.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="featureAccelChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Gyroscope peak</h3>
+                  <p>Maximum angular velocity per feature window.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="featureGyroChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Dominant frequency</h3>
+                  <p>Movement periodicity from IMU acceleration.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="featureFrequencyChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Tilt change</h3>
+                  <p>Estimated posture change within each window.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="featureTiltChart"></canvas>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel-card threshold-card">
+            <div class="card-heading">
+              <div>
+                <h3>Prototype detection thresholds</h3>
+                <p>
+                  Starting values only. Tune these with your labelled FFH, STF,
+                  near-miss and normal-motion datasets.
+                </p>
+              </div>
+            </div>
+
+            <div class="threshold-grid">
+              <div>
+                <span>FFH free-fall</span>
+                <strong>≤ 0.45 g</strong>
+              </div>
+
+              <div>
+                <span>Low-g duration</span>
+                <strong>≥ 0.12 s</strong>
+              </div>
+
+              <div>
+                <span>Impact</span>
+                <strong>≥ 2.50 g</strong>
+              </div>
+
+              <div>
+                <span>FFH gyro</span>
+                <strong>≥ 120 °/s</strong>
+              </div>
+
+              <div>
+                <span>STF gyro</span>
+                <strong>≥ 180 °/s</strong>
+              </div>
+
+              <div>
+                <span>Tilt change</span>
+                <strong>≥ 20°</strong>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="adminPage" class="page">
+          <div class="admin-layout">
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Worker assignment</h3>
+                  <p>Assign a worker name to a Nesso device.</p>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Device
+                  <select id="adminDevice"></select>
+                </label>
+
+                <label>
+                  Worker name
+                  <input id="adminWorker" type="text">
+                </label>
+
+                <label>
+                  Admin password
+                  <input id="adminPassword" type="password">
+                </label>
+              </div>
+
+              <button id="saveWorkerButton" class="primary-button">
+                Save assignment
+              </button>
+
+              <p id="adminMessage" class="form-message"></p>
+            </section>
+
+            <section class="panel-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Open incidents</h3>
+                  <p>Acknowledge events after they have been reviewed.</p>
+                </div>
+              </div>
+
+              <div id="adminIncidentList" class="compact-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="workerDetailPage" class="page detail-page">
+          <button id="backFromWorkerButton" class="back-button">
+            ← Back
+          </button>
+
+          <section id="workerDetailHero" class="worker-detail-hero"></section>
+
+          <div id="workerDetailKpis" class="kpi-grid"></div>
+
+          <div class="chart-grid">
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Acceleration magnitude</h3>
+                  <p>Recent raw IMU magnitude.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="detailAccelMagnitudeChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Accelerometer X / Y / Z</h3>
+                  <p>Recent three-axis acceleration.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="detailAccelAxesChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Gyroscope magnitude</h3>
+                  <p>Recent angular velocity magnitude.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="detailGyroMagnitudeChart"></canvas>
+              </div>
+            </section>
+
+            <section class="panel-card chart-panel">
+              <div class="card-heading">
+                <div>
+                  <h3>Gyroscope X / Y / Z</h3>
+                  <p>Recent three-axis angular velocity.</p>
+                </div>
+              </div>
+
+              <div class="chart-wrap">
+                <canvas id="detailGyroAxesChart"></canvas>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel-card">
+            <div class="card-heading">
+              <div>
+                <h3>Worker incident history</h3>
+                <p>Recorded incidents for this device.</p>
+              </div>
+            </div>
+
+            <div id="workerDetailIncidentList" class="incident-grid"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="incidentModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="incidentModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <span class="welcome-kicker">INCIDENT REVIEW</span>
+          <h2 id="incidentModalTitle">Incident details</h2>
+          <p id="incidentModalSubtitle"></p>
+        </div>
+        <button id="incidentModalClose" class="icon-button" aria-label="Close incident review">×</button>
+      </div>
+
+      <div id="incidentReviewStatus" class="review-status"></div>
+
+      <section class="review-section">
+        <div class="review-heading">
+          <div>
+            <h3>Why this alert was triggered</h3>
+            <p>Rule-by-rule explanation using the recorded feature values.</p>
+          </div>
+        </div>
+        <div id="explanationChecks" class="explanation-grid"></div>
+      </section>
+
+      <section class="review-section">
+        <div class="review-heading">
+          <div>
+            <h3>Incident replay</h3>
+            <p>IMU samples captured before and after the detected event. The vertical marker is the event time.</p>
+          </div>
+          <span id="replayCoverage" class="subtle-badge">Loading replay…</span>
+        </div>
+
+        <div class="replay-grid">
+          <div class="replay-chart-wrap">
+            <canvas id="replayAccelChart"></canvas>
+          </div>
+          <div class="replay-chart-wrap">
+            <canvas id="replayGyroChart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="review-section feedback-section">
+        <div class="review-heading">
+          <div>
+            <h3>Was this alert correct?</h3>
+            <p>Your feedback is stored with the incident and can be used to tune the prototype thresholds later.</p>
+          </div>
+        </div>
+
+        <div class="feedback-options" role="group" aria-label="Incident feedback">
+          <button class="feedback-button" data-feedback-label="ACTUAL_EVENT">✓ Actual safety event</button>
+          <button class="feedback-button" data-feedback-label="FALSE_ALARM">× False alarm</button>
+          <button class="feedback-button" data-feedback-label="UNSURE">? Unsure</button>
+        </div>
+
+        <label id="actualEventTypeWrap" class="feedback-field hidden">
+          What actually happened?
+          <select id="actualEventType" class="filter-control">
+            <option value="">Choose the true event type</option>
+            <option value="FFH">Fall from height (FFH)</option>
+            <option value="STF">Slip / trip / fall (STF)</option>
+            <option value="NEAR_MISS">Near miss</option>
+          </select>
+        </label>
+
+        <label class="feedback-field">
+          Review notes (optional)
+          <textarea id="feedbackNotes" rows="3" placeholder="Example: Worker stumbled while stepping backwards, recovered without falling."></textarea>
+        </label>
+
+        <label class="feedback-field">
+          Admin password
+          <input id="feedbackAdminPassword" type="password" placeholder="Required to save review">
+        </label>
+
+        <div class="feedback-footer">
+          <span id="feedbackMessage" class="form-message"></span>
+          <button id="saveFeedbackButton" class="primary-button">Save review</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <audio id="alertAudio" preload="auto" src="/assets/alert.wav"></audio>
+
+  <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

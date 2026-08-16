@@ -1,0 +1,93 @@
+NESSO EDGE + PERSISTENT FLASH BUFFERING
+======================================
+
+This version replaces the previous RAM-only offline queue with a hybrid:
+
+100 Hz IMU / edge detector
+        |
+        v
+small RAM queue
+        |
+        | Wi-Fi OFF
+        v
+LittleFS persistent flash file
+        |
+        | Wi-Fi reconnects
+        v
+Render -> Supabase -> Dashboard / Telegram
+
+WHY THIS IS BETTER
+------------------
+The previous RAM-only buffer survived a Wi-Fi outage but NOT a reboot/power loss.
+
+This version stores queued offline CloudSample records in LittleFS flash.
+The upload cursor is stored in ESP32 NVS Preferences.
+
+Therefore:
+- temporary Wi-Fi loss: buffered
+- reboot while offline: buffered samples can be recovered
+- Wi-Fi returns: old flash backlog uploads before new RAM data
+- after all saved records are confirmed by Render, the flash backlog is deleted
+
+FILES
+-----
+Yong_Pin_Nesso_EDGE_FLASH/
+Ryan_Nesso_EDGE_FLASH/
+lucuis_NESSO_EDGE_FLASH/
+
+Each contains:
+- .ino sketch
+- secrets.h
+
+EDIT ONLY secrets.h FOR NORMAL SETUP
+------------------------------------
+WIFI_SSID
+WIFI_PASSWORD
+API_KEY
+
+API_URL is already:
+https://dep-nesso-safety.onrender.com/api/v1/sensor/batch
+
+Do NOT upload a secrets.h containing real credentials to a public GitHub repository.
+
+HOW TO TEST
+-----------
+1. Upload the correct worker sketch.
+2. Open Serial Monitor at 115200.
+3. With Wi-Fi available, look for:
+   Render HTTP: 200
+4. Turn the hotspot/Wi-Fi off.
+5. The device should continue EDGE detection.
+6. Serial should show FLASH: saved ... samples.
+7. Reboot the Nesso while Wi-Fi is still OFF.
+8. After startup, look for:
+   FLASH: recovered pending samples = ...
+9. Turn Wi-Fi back ON.
+10. The device should upload old flash records first.
+11. When complete:
+    FLASH: offline backlog fully synced
+
+DISPLAY
+-------
+RAM <n> FLASH <n>
+
+RAM:
+samples waiting to be written/uploaded right now.
+
+FLASH:
+persistent samples that still need to reach Render.
+
+IMPORTANT
+---------
+LittleFS needs a usable filesystem partition in the board's flash layout.
+The code first mounts without formatting to preserve existing data. If no
+filesystem exists, it attempts a first-time format.
+
+If LittleFS still cannot mount, the Serial Monitor will say:
+FLASH: RAM-only fallback enabled
+
+In that case the Nesso still functions, but persistent buffering is unavailable
+until the board's flash partition configuration supports LittleFS.
+
+The FFH/STF/near-miss thresholds are prototype starting values. Validate them
+with controlled labelled tests; do not perform dangerous falls.

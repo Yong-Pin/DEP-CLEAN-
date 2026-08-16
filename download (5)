@@ -1,0 +1,20 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+
+# Arduino secrets
+**/secrets.h
+
+# Local analysis data / exports
+*.csv
+*.xlsx
+*.zip
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
